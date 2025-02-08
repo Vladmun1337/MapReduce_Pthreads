@@ -8,7 +8,8 @@
 using namespace std;
 
 string parse_string(string s) {
-
+    
+    // Convert word to include lowercase only
     string t = "";
     for(int i = 0; i < s.length(); i++)
         if(s[i] >= 'A' && s[i] <= 'Z')
@@ -25,6 +26,7 @@ void *mapper(void *arg) {
     int id;
     bool is_empty;
 
+    // Check if document queue is empty
     pthread_mutex_lock(map_pool->doc_mutex);
 
     is_empty = (map_pool->docs)->empty();
@@ -36,6 +38,7 @@ void *mapper(void *arg) {
 
         pthread_mutex_lock(map_pool->doc_mutex);
 
+        // fetch a document and increase the count
         my_file = (map_pool->docs)->front();
         (map_pool->docs)->pop();
 
@@ -45,20 +48,20 @@ void *mapper(void *arg) {
 
         ifstream file_read(PATH + my_file);
 
-        // TODO free sets
         set<word_block, set_cmp> *doc_set = new set<word_block, set_cmp>;
         string word;
 
+        // Read file word by word
         while(file_read >> word) {
 
             if(parse_string(word) == "")
                 continue;
 
+            // Convert word to match format and add to set
             word_block block;
             block.word = parse_string(word);
             block.file_ids.insert(id + 1);
 
-            // make comparator for set
             doc_set->insert(block);
         }
 
@@ -72,15 +75,15 @@ void *mapper(void *arg) {
         pthread_mutex_unlock(map_pool->doc_mutex);
 
         // Add resulting set to set queue
-
         pthread_mutex_lock(map_pool->set_mutex);
 
         (map_pool->set_q)->push(doc_set);
 
-        pthread_mutex_unlock(map_pool->set_mutex);
+       pthread_mutex_unlock(map_pool->set_mutex);
 
     }
 
+    // Wait at barrier to stop reducers from working
     pthread_barrier_wait(map_pool->bar);
     
     return NULL;
@@ -88,15 +91,15 @@ void *mapper(void *arg) {
 
 void *reducer(void *arg) {
 
-    
-
     reducer_pool *reduce_pool = (reducer_pool *)arg;
 
+    // Wait for mappers to finish
     pthread_barrier_wait(reduce_pool->bar);
 
     set<word_block, set_cmp> *curr_set;
     bool is_empty;
 
+    // Check if set queue is empty
     pthread_mutex_lock(reduce_pool->set_mutex);
 
     is_empty = (reduce_pool->set_q)->empty();
@@ -108,49 +111,48 @@ void *reducer(void *arg) {
 
         pthread_mutex_lock(reduce_pool->set_mutex);
 
-        // TODO free set
+        // Fetch and parse first set in queue
         curr_set = (reduce_pool->set_q)->front();
         (reduce_pool->set_q)->pop();
 
         pthread_mutex_unlock(reduce_pool->set_mutex);
 
-        // Add to alphabet table
-
+        // Add each word to alphabet table
         for(auto &elem : *curr_set) {
 
             int idx = elem.word[0] - 'a';
 
             pthread_mutex_lock((reduce_pool->alpha_mutex)[idx]);
 
+            // Search iterator of block with corresponding word
             auto it = find_if((*(reduce_pool->alphabet))[idx].begin(), (*(reduce_pool->alphabet))[idx].end(),
-                            [&](const word_block& a) {return a.word == elem.word; });
+                            [&](const word_block& a) { return a.word == elem.word; });
 
             // Check if word already exists and sort with set
             if(it == (*(reduce_pool->alphabet))[idx].end()) {
                 (*(reduce_pool->alphabet))[idx].insert(elem);
 
             } else {
-                // Get node from set iterator
+                // Get set node from iterator
                 auto set_node = (*(reduce_pool->alphabet))[idx].extract(it);
 
                 word_block new_block;
                 new_block.word = elem.word;
                 new_block.file_ids = set_node.value().file_ids;
 
-                // copy from element all indices and add to alphabetical set
+                // copy from  current element all indices and add to alphabetical set
                 for(auto& id : elem.file_ids)
                     new_block.file_ids.insert(id);
 
                 (*(reduce_pool->alphabet))[idx].insert(new_block);
-
             }
 
             pthread_mutex_unlock((reduce_pool->alpha_mutex)[idx]);
 
         }
 
+        // Free popped set when done parsing
         delete curr_set;
-
 
         // Check if set queue is empty
         pthread_mutex_lock(reduce_pool->set_mutex);
@@ -167,10 +169,10 @@ void *reducer(void *arg) {
 void generate_files(vector<set<word_block, set_cmp>> *alphabet) {
 
     char let = 'a';
-    ofstream alpha(string(1, let)  + string(".txt"));
 
     for(int i = 0; i < ALPHABET_LEN; i++) {
 
+        // Open file of corresponding letter and copy blocks from alphabet sets
         ofstream alpha(string(1, let + i)  + string(".txt"));
 
         for(auto &it : (*alphabet)[i]) {
@@ -210,32 +212,29 @@ int main(int argc, char **argv)
 
     for(int i = 0; i < n; i++) {
         fin >> doc;
-        cout << "Doc " << i << " is " << doc << endl;
-
         docs->push(doc);
     }
 
-    // Build structs for sync
-
+    // Build sync and thread dependencies
+    pthread_t *mappers_td, *reducers_td;
     pthread_mutex_t *doc_mutex, *set_mutex;
     pthread_barrier_t *bar;
+
+    // Get parameters and convert to int
     int M = atoi(argv[1]), R = atoi(argv[2]);
 
-    pthread_t *mappers_td, *reducers_td;
+    mappers_td = new pthread_t[M];
+    reducers_td = new pthread_t[R];
 
-    mappers_td = (pthread_t*) malloc(M * sizeof(pthread_t));
-    reducers_td = (pthread_t*) malloc(R * sizeof(pthread_t));
-
-    doc_mutex = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t));
-    set_mutex = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t));
-    bar = (pthread_barrier_t*) malloc(sizeof(pthread_barrier_t));
+    doc_mutex = new pthread_mutex_t;
+    set_mutex = new pthread_mutex_t;
+    bar = new pthread_barrier_t;
 
     pthread_mutex_init(doc_mutex, NULL);
     pthread_mutex_init(set_mutex, NULL);
     pthread_barrier_init(bar, NULL, M + R);
 
-    // structs for map
-
+    // Build mapper pool
     mapper_pool *map_pool = new mapper_pool;
     queue<set<word_block, set_cmp>*> *set_q = new queue<set<word_block, set_cmp>*>;
 
@@ -246,8 +245,7 @@ int main(int argc, char **argv)
     map_pool->set_mutex = set_mutex;
     map_pool->file_ids = 0;
 
-    // structs for reduce
-
+    // Build reducer pool
     reducer_pool *reduce_pool = new reducer_pool;
 
     pthread_mutex_t **alpha_mutex = new pthread_mutex_t*[ALPHABET_LEN];
@@ -263,12 +261,8 @@ int main(int argc, char **argv)
     reduce_pool->alpha_mutex = alpha_mutex;
     reduce_pool->alphabet = &alphabet;
 
-    cout << "set queue len is " << map_pool->set_q->size() << " before" << endl;
-
-    // Build threads
-
+    // Build and join mapper + reducer threads
     for(int i = 0; i < max(M, R); i++) {
-
         if(i < M)
             pthread_create(&mappers_td[i], NULL, mapper, (void *) map_pool);
 
@@ -285,34 +279,30 @@ int main(int argc, char **argv)
     }
 
 
-    cout << "set queue len is " << map_pool->set_q->size() << " after" << endl; 
-
-
-    // Check set queue out + free (TODO: delete without prints for sanity)
+    // Write pairs to corresponding files
     generate_files(&alphabet);
-
     
-    // Release and exit
+    // Delete pool data 
     delete docs;
     delete set_q;
     delete map_pool;
     delete reduce_pool;
-    //delete alphabet;
 
     for(int i = 0; i < ALPHABET_LEN; i++)
         delete alpha_mutex[i];
     
     delete[] alpha_mutex;
 
+    // Destroy sync variables and free memory
     pthread_mutex_destroy(doc_mutex);
     pthread_mutex_destroy(set_mutex);
     pthread_barrier_destroy(bar);
 
-    free(doc_mutex);
-    free(set_mutex);
-    free(bar);
-    free(mappers_td);
-    free(reducers_td);
+    delete doc_mutex;
+    delete set_mutex;
+    delete bar;
+    delete[] mappers_td;
+    delete[] reducers_td;
 
     return 0;
 }
