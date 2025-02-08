@@ -51,3 +51,5 @@ The reducers' pool contains the set queue, the alphabetical vector, an array of 
 This project was very fun and gave me the opportunity to further my understandings in optimization through parallelism. For every new worker thread added, a considerate speedup is added.
 
 To test for yourself, I encourage running the project on the given dataset with the `./run_with_docker.sh` command.
+
+**PS:** In the spirit of our lecture, I refrained from using standard C++ threading functionalities. This project was meant to familiarize with the pthreads library.
