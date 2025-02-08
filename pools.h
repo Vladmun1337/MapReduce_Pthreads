@@ -10,12 +10,14 @@ struct word_block {
 };
 
 struct set_cmp {
+    // Comparator for set
     bool operator()(const word_block& a, const word_block& b) const {
-        if(a.word[0] == b.word[0])
+        if(a.word[0] == b.word[0]) {
             if(a.file_ids.size() == b.file_ids.size())
                 return a.word < b.word;
-            else
-                return a.file_ids.size() > b.file_ids.size();
+
+            return a.file_ids.size() > b.file_ids.size();
+        }
         
         return a.word[0] < b.word[0];
     }
